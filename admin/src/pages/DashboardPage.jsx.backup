@@ -1,0 +1,252 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { useQuery } from 'react-query';
+import { Link } from 'react-router-dom';
+import {
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell
+} from 'recharts';
+import { dashboardAPI, attendanceAPI, salesAPI, meetingsAPI } from '../api';
+import { StatCard, PageLoader, LiveDot, Badge } from '../components/common';
+import { fmtINR, fmtTime, attendanceBadge, leadSourceLabel, Avatar } from '../utils/helpers';
+import { Avatar as AvatarComp } from '../components/common';
+import { TrendingUp, TrendingDown, Users, DollarSign, Calendar, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-white border border-surface-100 rounded-xl shadow-card p-3 text-xs">
+      <p className="text-surface-600 mb-1">{label}</p>
+      {payload.map((p) => (
+        <p key={p.dataKey} className="font-medium" style={{ color: p.color }}>
+          {p.name}: {p.name === 'Revenue' ? fmtINR(p.value) : p.value}
+        </p>
+      ))}
+    </div>
+  );
+};
+
+const COLORS = ['#2E6BE6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+
+export default function DashboardPage() {
+  const { data: dash, isLoading } = useQuery('dashboard', () => dashboardAPI.get().then(r => r.data.data), {
+    refetchInterval: 60000,
+  });
+  const { data: salesData } = useQuery('sales-summary', () =>
+    salesAPI.summary().then(r => r.data.data), { refetchInterval: 120000 }
+  );
+  const { data: teamAtt } = useQuery('team-att-today', () =>
+    attendanceAPI.getTeam({ limit: 8 }).then(r => r.data.data)
+  );
+  const { data: followUps } = useQuery('followups', () =>
+    meetingsAPI.followUps().then(r => r.data.data)
+  );
+
+  if (isLoading) return <PageLoader />;
+
+  const d = dash || {};
+
+  // Build a simple 7-day sales trend from summary data
+  const salesTrend = salesData?.trend?.slice(-7) || [];
+
+  // Calculate additional metrics
+  const totalRevenue = (d.sales?.mtd_revenue || 0) + (d.patients?.total_revenue || 0);
+  const taskCompletionRate = d.tasks?.total ? Math.round((d.tasks.completed / d.tasks.total) * 100) : 0;
+  const quotationConversionRate = d.quotations?.total ? Math.round((d.quotations.accepted / d.quotations.total) * 100) : 0;
+
+  // Patient status distribution for pie chart
+  const patientStatusData = [
+    { name: 'Active', value: d.patients?.active || 0, color: '#2E6BE6' },
+    { name: 'Completed', value: d.patients?.completed || 0, color: '#10B981' },
+    { name: 'Cancelled', value: d.patients?.cancelled || 0, color: '#EF4444' },
+  ].filter(item => item.value > 0);
+
+  return (
+    <div>
+      <h1>Dashboard</h1>
+    </div>
+  );
+}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-surface-900">Lead Summary</h3>
+              <p className="text-xs text-surface-500">Month-to-date leads overview</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-lg border border-surface-200 p-4">
+              <p className="text-xs text-surface-500 uppercase tracking-wide">Total Leads</p>
+              <p className="text-2xl font-semibold text-surface-900">{d.leads?.total ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-surface-200 p-4">
+              <p className="text-xs text-surface-500 uppercase tracking-wide">New Leads</p>
+              <p className="text-2xl font-semibold text-surface-900">{d.leads?.new_leads ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-surface-200 p-4">
+              <p className="text-xs text-surface-500 uppercase tracking-wide">Converted</p>
+              <p className="text-2xl font-semibold text-surface-900">{d.leads?.converted ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-surface-200 p-4">
+              <p className="text-xs text-surface-500 uppercase tracking-wide">Lost</p>
+              <p className="text-2xl font-semibold text-surface-900">{d.leads?.lost ?? 0}</p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="flex items-center justify-between text-xs text-surface-500 mb-2">
+              <span>Conversion Rate</span>
+              <span>{d.leads?.conversion_rate ?? 0}%</span>
+            </div>
+            <div className="h-2 bg-surface-100 rounded-full overflow-hidden">
+              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${d.leads?.conversion_rate ?? 0}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-surface-900">Lead Sources</h3>
+              <p className="text-xs text-surface-500">Counts by platform this month</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            {d.leads?.sources?.length ? (
+              d.leads.sources.map((source) => (
+                <div key={source.source} className="flex items-center justify-between rounded-lg border border-surface-200 px-4 py-3">
+                  <span className="text-sm text-surface-700">{leadSourceLabel(source.source)}</span>
+                  <span className="text-sm font-semibold text-surface-900">{source.count}</span>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-surface-500">No lead source data for this period.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Charts row */}
+      <div className="grid grid-cols-2 gap-6">
+        {/* Sales trend */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-surface-900">Sales Trend</h3>
+              <p className="text-xs text-surface-500">Last 7 days revenue</p>
+            </div>
+            <Link to="/sales" className="text-xs text-brand-500 hover:text-brand-700">View all →</Link>
+          </div>
+          <ResponsiveContainer width="100%" height={160}>
+            <AreaChart data={salesTrend} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#2E6BE6" stopOpacity={0.15}/>
+                  <stop offset="95%" stopColor="#2E6BE6" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#F0F1F5" vertical={false} />
+              <XAxis dataKey="period" tick={{ fontSize: 10, fill: '#9CA3AF' }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} axisLine={false} tickLine={false}
+                tickFormatter={(v) => fmtINR(v)} width={50} />
+              <Tooltip content={<CustomTooltip />} />
+              <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#2E6BE6" strokeWidth={2}
+                fill="url(#revenueGrad)" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Lead pipeline */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-surface-900">Lead Pipeline</h3>
+              <p className="text-xs text-surface-500">Month to date</p>
+            </div>
+            <Link to="/leads" className="text-xs text-brand-500 hover:text-brand-700">View all →</Link>
+          </div>
+          <div className="space-y-3">
+            {[
+              { label: 'New',        key: 'new_leads',  color: 'bg-brand-400',   val: d.leads?.new_leads },
+              { label: 'Contacted',  key: 'c',          color: 'bg-teal-400',    val: Math.round((d.leads?.total || 0) * 0.4) },
+              { label: 'Follow Up',  key: 'f',          color: 'bg-amber-400',   val: d.leads?.followups_overdue },
+              { label: 'Converted',  key: 'converted',  color: 'bg-emerald-500', val: d.leads?.converted },
+            ].map(({ label, color, val = 0 }) => {
+              const total = d.leads?.total || 1;
+              const pct = Math.min(100, Math.round((val / total) * 100));
+              return (
+                <div key={label} className="flex items-center gap-3">
+                  <span className="text-xs text-surface-600 w-20 flex-shrink-0">{label}</span>
+                  <div className="flex-1 h-2 bg-surface-100 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-500 ${color}`}
+                      style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-xs font-medium text-surface-800 w-6 text-right">{val}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom row */}
+      <div className="grid grid-cols-2 gap-6">
+        {/* Today's attendance */}
+        <div className="card">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-surface-50">
+            <h3 className="text-sm font-semibold text-surface-900">Today's Attendance</h3>
+            <Link to="/attendance" className="text-xs text-brand-500 hover:text-brand-700">View all →</Link>
+          </div>
+          <div className="divide-y divide-surface-50">
+            {teamAtt?.slice(0, 6).map((row) => (
+              <div key={row.id} className="flex items-center gap-3 px-5 py-3">
+                <AvatarComp name={row.name} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-surface-900 truncate">{row.name}</p>
+                  <p className="text-xs text-surface-500">
+                    {row.checkin_time ? `In ${fmtTime(row.checkin_time)}` : row.zone}
+                  </p>
+                </div>
+                <Badge variant={
+                  row.status === 'present' ? 'green' : row.status === 'late' ? 'amber' :
+                  row.status === 'absent' ? 'red' : 'gray'
+                }>{row.status || 'No record'}</Badge>
+              </div>
+            ))}
+            {!teamAtt?.length && (
+              <p className="text-xs text-surface-500 px-5 py-6 text-center">No attendance data yet</p>
+            )}
+          </div>
+        </div>
+
+        {/* Follow-ups due */}
+        <div className="card">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-surface-50">
+            <h3 className="text-sm font-semibold text-surface-900">Follow-ups Due</h3>
+            <Link to="/meetings" className="text-xs text-brand-500 hover:text-brand-700">View all →</Link>
+          </div>
+          <div className="divide-y divide-surface-50">
+            {followUps?.slice(0, 5).map((f) => (
+              <div key={f.id} className="flex items-center gap-3 px-5 py-3">
+                <div className="w-8 h-8 bg-purple-50 rounded-lg flex items-center justify-center flex-shrink-0 text-sm">
+                  🤝
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-surface-900 truncate">{f.doctor_name}</p>
+                  <p className="text-xs text-surface-500">{f.employee_name} · {f.hospital}</p>
+                </div>
+                {f.days_overdue > 0
+                  ? <Badge variant="red">{f.days_overdue}d late</Badge>
+                  : <Badge variant="amber">Today</Badge>
+                }
+              </div>
+            ))}
+            {!followUps?.length && (
+              <p className="text-xs text-surface-500 px-5 py-6 text-center">🎉 No follow-ups overdue</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

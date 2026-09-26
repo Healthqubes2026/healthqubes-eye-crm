@@ -1,0 +1,36 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+*/node_modules/
+
+# ── Environment files ─────────────────────────────────────────────────────────
+.env
+backend/.env
+admin/.env
+mobile/.env
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+admin/build/
+mobile/android/app/build/
+mobile/android/build/
+mobile/ios/build/
+
+# ── React Native ──────────────────────────────────────────────────────────────
+mobile/ios/Pods/
+mobile/.gradle/
+
+# ── Sensitive files ───────────────────────────────────────────────────────────
+mobile/android/app/*.keystore
+mobile/android/app/google-services.json
+backend/uploads/
+*.log
+logs/
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln

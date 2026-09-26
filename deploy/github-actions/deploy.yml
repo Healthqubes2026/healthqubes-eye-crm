@@ -1,0 +1,200 @@
+name: Healthqube Eyes — CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ── 1. Lint & Test ────────────────────────────────────────────────────────
+  test:
+    name: Test API
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testroot
+          MYSQL_DATABASE:      healthqubes_test
+          MYSQL_USER:          testuser
+          MYSQL_PASSWORD:      testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Write test .env
+        working-directory: ./backend
+        run: |
+          cat > .env << EOF
+          NODE_ENV=test
+          PORT=5001
+          DB_HOST=127.0.0.1
+          DB_PORT=3306
+          DB_USER=testuser
+          DB_PASSWORD=testpass
+          DB_NAME=healthqubes_test
+          JWT_SECRET=test_jwt_secret_32chars_minimum!!
+          JWT_REFRESH_SECRET=test_refresh_secret_32chars!!
+          JWT_EXPIRES_IN=1h
+          JWT_REFRESH_EXPIRES_IN=1d
+          UPLOAD_PATH=./uploads_test
+          EOF
+
+      - name: Run migrations
+        working-directory: ./backend
+        run: node src/config/migrate.js
+
+      - name: Run tests
+        working-directory: ./backend
+        run: npm test --if-present
+
+      - name: Health check
+        working-directory: ./backend
+        run: |
+          node src/server.js &
+          sleep 3
+          curl -f http://localhost:5001/health || exit 1
+          kill %1
+
+  # ── 2. Build admin panel ─────────────────────────────────────────────────
+  build-admin:
+    name: Build Admin Panel
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./admin
+        run: npm ci
+
+      - name: Write production .env
+        working-directory: ./admin
+        run: |
+          echo "REACT_APP_API_URL=https://${{ secrets.DOMAIN }}/api/v1" > .env
+          echo "REACT_APP_UPLOAD_URL=https://${{ secrets.DOMAIN }}" >> .env
+          echo "REACT_APP_APP_NAME=Healthqube Eyes" >> .env
+
+      - name: Build
+        working-directory: ./admin
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-build
+          path: admin/build/
+          retention-days: 7
+
+  # ── 3. Deploy to server ──────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [test, build-admin]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download admin build
+        uses: actions/download-artifact@v4
+        with:
+          name: admin-build
+          path: admin-build/
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy API to server
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'REMOTE'
+            set -e
+            cd /opt/healthqubes-eye/api
+            git pull origin main
+            npm ci --omit=dev --quiet
+            node src/config/migrate.js
+            pm2 reload healthqubes-api --update-env
+            echo "API deployed ✓"
+          REMOTE
+
+      - name: Deploy admin panel to server
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            admin-build/ \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/healthqubes-eye/admin/build/
+          echo "Admin panel deployed ✓"
+
+      - name: Reload Nginx
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "nginx -t && systemctl reload nginx && echo 'Nginx reloaded ✓'"
+
+      - name: Verify deployment
+        run: |
+          sleep 5
+          STATUS=$(curl -sf "https://${{ secrets.DOMAIN }}/health" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','?'))")
+          echo "Health check: $STATUS"
+          [ "$STATUS" = "ok" ] || exit 1
+
+      - name: Notify on success
+        if: success()
+        run: |
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"✅ Healthqube Eyes deployed successfully to production by ${{ github.actor }}\"}" \
+            || true
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"❌ Healthqube Eyes deployment FAILED — commit ${{ github.sha }} by ${{ github.actor }}\"}" \
+            || true
+
+# ── Required GitHub Secrets ───────────────────────────────────────────────────
+# Add these in GitHub → Settings → Secrets → Actions:
+#
+#   SERVER_HOST        IP or hostname of your production server
+#   SERVER_USER        SSH user (e.g. ubuntu or root)
+#   SSH_PRIVATE_KEY    Contents of your SSH private key
+#   DOMAIN             e.g. api.healthqubes.in
+#   SLACK_WEBHOOK_URL  (optional) Slack webhook for deployment notifications
